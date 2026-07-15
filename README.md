@@ -44,6 +44,7 @@
 ```
 codeql-assistant/
 ├── assets/                 # 应用资源文件（图标等）
+│   ├── icon.png            # 工具图标
 ├── engine/                 # 核心引擎层
 │   ├── config.go           # 配置模型与持久化
 │   ├── history.go          # 运行历史记录管理
@@ -84,7 +85,7 @@ codeql-assistant/
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/yourusername/codeql-assistant.git
+git clone https://github.com/sh1yan/codeql-assistant.git
 cd codeql-assistant
 
 # 2. 安装依赖
@@ -149,6 +150,12 @@ codeql database analyze <database-path> <query-path>   --format=<format>   --out
 ### 5. 查看历史记录
 
 点击 **「历史记录」** 查看所有分析任务的运行时间、状态、耗时和输出文件，支持一键清空。
+
+### 6. CodeQL Assistant 主界面截图
+
+<p align="center">
+  <img src="assets/screenshot.png" alt="CodeQL Assistant 主界面" width="800">
+</p>
 
 ---
 
