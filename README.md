@@ -84,7 +84,7 @@ codeql-assistant/
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/yourusername/codeql-assistant.git
+git clone https://github.com/sh1yan/codeql-assistant.git
 cd codeql-assistant
 
 # 2. 安装依赖
