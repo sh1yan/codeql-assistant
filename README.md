@@ -44,6 +44,7 @@
 ```
 codeql-assistant/
 ├── assets/                 # 应用资源文件（图标等）
+│   ├── icon.png            # 工具图标
 ├── engine/                 # 核心引擎层
 │   ├── config.go           # 配置模型与持久化
 │   ├── history.go          # 运行历史记录管理
