@@ -47,6 +47,7 @@ type App struct {
 	runBtn           *widget.Button
 	stopBtn          *widget.Button
 	clearBtn         *widget.Button
+	copyConsoleBtn   *widget.Button
 	saveProfileBtn   *widget.Button
 	deleteProfileBtn *widget.Button // 新增删除配置按钮的功能 2026.7.15
 	historyBtn       *widget.Button
@@ -162,6 +163,7 @@ func (a *App) createWidgets() {
 	a.consoleLabel = widget.NewLabel("")
 	a.consoleLabel.Wrapping = fyne.TextWrapBreak
 	a.consoleLabel.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
+	a.consoleLabel.Selectable = true // 允许用鼠标选中并复制控制台输出
 
 	a.statusLabel = widget.NewLabel("就绪")
 	a.statusLabel.TextStyle = fyne.TextStyle{Bold: true}
@@ -181,6 +183,10 @@ func (a *App) createWidgets() {
 		if a.consoleScroll != nil {
 			a.consoleScroll.Refresh()
 		}
+	})
+
+	a.copyConsoleBtn = widget.NewButtonWithIcon("复制", theme.ContentCopyIcon(), func() {
+		fyne.CurrentApp().Clipboard().SetContent(a.consoleLabel.Text)
 	})
 
 	a.saveProfileBtn = widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), a.onSaveProfile)
@@ -318,6 +324,7 @@ func (a *App) buildConsoleSection() fyne.CanvasObject {
 	header := container.NewHBox(
 		widget.NewLabelWithStyle("控制台输出", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		layout.NewSpacer(),
+		a.copyConsoleBtn,
 		a.clearBtn,
 	)
 	// 给控制台 Label 加一个卡片背景，模拟 Entry 的输入框视觉效果

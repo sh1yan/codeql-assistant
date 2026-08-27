@@ -53,6 +53,8 @@ codeql-assistant/
 │   ├── app.go              # 主应用界面与事件处理
 │   └── dirpicker.go        # 自定义文件/目录选择器
 ├── main.go                 # 程序入口
+├── envpath.go              # 打包后用户环境变量加载与 PATH 合并
+├── envpath_test.go         # 环境变量解析与 PATH 合并单元测试
 ├── go.mod                  # Go 模块定义
 └── go.sum                  # 依赖校验
 ```
@@ -67,6 +69,10 @@ codeql-assistant/
 - **`ui/` — 用户界面层**
   - `app.go`: 构建主窗口布局（配置区 / 控制台区 / 控制栏），处理所有用户交互事件（运行、停止、创建数据库、保存配置、查看历史等）。
   - `dirpicker.go`: 实现自定义目录选择器和文件选择器，支持完整文件系统导航、快捷跳转（根目录、用户主目录、桌面）和路径直接输入。
+
+- **`main.go` / `envpath.go` — 程序入口与环境加载**
+  - `main.go`: 初始化应用窗口并在启动时调用 `initUserEnv()` 补齐用户环境。
+  - `envpath.go`: 通过用户登录 shell 读取完整环境变量，合并 nvm、jenv、pnpm、sdkman、Homebrew 等常见工具目录到 `PATH`，并同步 `JAVA_HOME`、`CODEQL_HOME`、`NVM_DIR` 等关键变量。
 
 ---
 
@@ -104,6 +110,8 @@ fyne package -os windows -icon assets/icon.png
 ```
 
 > **提示**: 首次编译 Fyne 应用可能需要较长时间，后续构建将显著加速。
+>
+> **提示**: macOS 上通过 Finder 双击启动打包后的 `.app` 时，系统不会继承终端里配置的 `PATH`。应用启动时会自动读取用户的 zsh/bash 登录环境，因此 nvm、jenv、pnpm、Homebrew、Maven、CodeQL 等工具无需手动配置即可被识别；请确保这些工具已写入 `~/.zshrc`、`~/.zprofile` 或 `~/.bash_profile`。
 
 ---
 
@@ -160,6 +168,17 @@ codeql database analyze <database-path> <query-path>   --format=<format>   --out
 ---
 
 ## ⚙️ 技术细节
+
+### 打包后环境变量加载
+
+macOS 的 Finder / LaunchServices 启动 GUI 应用时只提供最小环境，不会继承终端中的 `PATH`，这会导致打包后的应用无法找到 `java`、`node`、`npm`、`yarn`、`mvn`、`codeql` 等命令。`envpath.go` 在应用启动阶段完成以下工作：
+
+1. 以 `-lic` 模式启动用户的 zsh/bash（同时加载 `~/.zprofile` 与 `~/.zshrc`/`~/.bash_profile`），读取完整环境变量。
+2. 将 shell 中的 `PATH` 与当前进程 `PATH` 合并去重，并追加 nvm、jenv、pnpm、sdkman、Homebrew、Volta、asdf、bun、yarn、Go、Cargo 等常见工具目录作为兜底。
+3. 将 `JAVA_HOME`、`CODEQL_HOME`、`NVM_DIR`、`PNPM_HOME`、`GOROOT`、`GOPATH`、`MAVEN_OPTS`、`GRADLE_OPTS` 等变量同步到应用进程，确保 CodeQL 及其子进程（Maven、Gradle、Node 等）能正确运行。
+4. 环境读取设置 6 秒超时；即使 shell 启动失败，已存在的常见工具目录仍会合并进 `PATH`。
+
+Windows 应用启动时会直接继承系统与用户环境变量，无需此处理。
 
 ### 进程生命周期管理
 

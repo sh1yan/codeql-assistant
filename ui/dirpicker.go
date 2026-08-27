@@ -45,6 +45,7 @@ func _ShowDirectoryPickerAt(parent fyne.Window, title string, currentDir string,
 	var list *widget.List
 	var parentDirBtn *widget.Button
 	var selectLabel *widget.Label
+	var outerScroll *container.Scroll
 
 	refreshDir := func(dir string) {
 		dir = filepath.Clean(dir)
@@ -53,16 +54,25 @@ func _ShowDirectoryPickerAt(parent fyne.Window, title string, currentDir string,
 			selectLabel.SetText("选中目录: " + dir)
 		}
 
+		list.UnselectAll()
+		list.ScrollToTop()
+		if outerScroll != nil {
+			outerScroll.ScrollToTop()
+		}
+
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			dirs = nil
+			if selectLabel != nil {
+				selectLabel.SetText("无法读取该目录: " + err.Error())
+			}
 			list.Refresh()
 			return
 		}
 
 		dirs = nil
 		for _, e := range entries {
-			if e.IsDir() {
+			if dirEntryIsDir(dir, e) {
 				dirs = append(dirs, e.Name())
 			}
 		}
@@ -165,6 +175,7 @@ func _ShowDirectoryPickerAt(parent fyne.Window, title string, currentDir string,
 
 	cancelBtn := widget.NewButton("取消", func() {})
 
+	outerScroll = container.NewVScroll(list)
 	content := container.NewBorder(
 		container.NewVBox(
 			container.NewBorder(nil, nil, widget.NewLabel("路径:"), nil, pathEntry),
@@ -177,7 +188,7 @@ func _ShowDirectoryPickerAt(parent fyne.Window, title string, currentDir string,
 			container.NewHBox(selectBtn, layout.NewSpacer(), cancelBtn), // 设置取消按钮的左右位置
 		),
 		nil, nil,
-		container.NewVScroll(list),
+		outerScroll,
 	)
 
 	// d = dialog.NewCustom(title, "", content, parent)
@@ -193,15 +204,18 @@ func _ShowDirectoryPickerAt(parent fyne.Window, title string, currentDir string,
 
 // ShowFilePicker 打开文件选择器，支持浏览完整文件系统。
 func ShowFilePicker(parent fyne.Window, title string, callback func(string)) {
-
-	// 先声明 d 变量（注意是指针类型）
-	var d dialog.Dialog
-
 	currentDir := "/"
 	home, err := os.UserHomeDir()
 	if err == nil {
 		currentDir = home
 	}
+	_ShowFilePickerAt(parent, title, currentDir, callback)
+}
+
+func _ShowFilePickerAt(parent fyne.Window, title string, currentDir string, callback func(string)) {
+
+	// 先声明 d 变量（注意是指针类型）
+	var d dialog.Dialog
 
 	pathEntry := widget.NewEntry()
 	pathEntry.SetText(currentDir)
@@ -209,6 +223,7 @@ func ShowFilePicker(parent fyne.Window, title string, callback func(string)) {
 	var entries []os.DirEntry
 	var list *widget.List
 	var selectLabel *widget.Label
+	var outerScroll *container.Scroll
 
 	refreshDir := func(dir string) {
 		dir = filepath.Clean(dir)
@@ -216,16 +231,28 @@ func ShowFilePicker(parent fyne.Window, title string, callback func(string)) {
 		if selectLabel != nil {
 			selectLabel.SetText("浏览目录: " + dir)
 		}
+
+		list.UnselectAll()
+		list.ScrollToTop()
+		if outerScroll != nil {
+			outerScroll.ScrollToTop()
+		}
+
 		var err error
 		entries, err = os.ReadDir(dir)
 		if err != nil {
 			entries = nil
+			if selectLabel != nil {
+				selectLabel.SetText("无法读取该目录: " + err.Error())
+			}
 			list.Refresh()
 			return
 		}
 		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].IsDir() != entries[j].IsDir() {
-				return entries[i].IsDir()
+			iDir := dirEntryIsDir(dir, entries[i])
+			jDir := dirEntryIsDir(dir, entries[j])
+			if iDir != jDir {
+				return iDir
 			}
 			return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
 		})
@@ -251,7 +278,7 @@ func ShowFilePicker(parent fyne.Window, title string, callback func(string)) {
 			if entry.Name() == ".." {
 				box.Objects[0].(*widget.Icon).SetResource(theme.FolderOpenIcon())
 				label.SetText(".. (上级目录)")
-			} else if entry.IsDir() {
+			} else if dirEntryIsDir(pathEntry.Text, entry) {
 				box.Objects[0].(*widget.Icon).SetResource(theme.FolderIcon())
 				label.SetText(entry.Name() + "/")
 			} else {
@@ -265,7 +292,7 @@ func ShowFilePicker(parent fyne.Window, title string, callback func(string)) {
 		e := entries[id]
 		if e.Name() == ".." {
 			refreshDir(filepath.Dir(pathEntry.Text))
-		} else if e.IsDir() {
+		} else if dirEntryIsDir(pathEntry.Text, e) {
 			refreshDir(filepath.Join(pathEntry.Text, e.Name()))
 		} else {
 			// 选中文件
@@ -307,6 +334,7 @@ func ShowFilePicker(parent fyne.Window, title string, callback func(string)) {
 
 	cancelBtn := widget.NewButton("取消", func() {})
 
+	outerScroll = container.NewVScroll(list)
 	content := container.NewBorder(
 		container.NewVBox(
 			container.NewBorder(nil, nil, widget.NewLabel("路径:"), nil, pathEntry),
@@ -319,7 +347,7 @@ func ShowFilePicker(parent fyne.Window, title string, callback func(string)) {
 			container.NewHBox(selectBtn, layout.NewSpacer(), cancelBtn), // 设置取消按钮的靠右边的位置
 		),
 		nil, nil,
-		container.NewVScroll(list),
+		outerScroll,
 	)
 
 	d = dialog.NewCustomWithoutButtons(title, content, parent)
@@ -339,3 +367,16 @@ func (f *fakeDirEntry) Name() string               { return f.name }
 func (f *fakeDirEntry) IsDir() bool                { return f.isDir }
 func (f *fakeDirEntry) Type() os.FileMode          { return os.ModeDir }
 func (f *fakeDirEntry) Info() (os.FileInfo, error) { return nil, nil }
+
+// dirEntryIsDir 判断目录项是否为目录；符号链接会跟随到目标再判断，
+// 避免指向目录的符号链接在选择器中消失。
+func dirEntryIsDir(base string, e os.DirEntry) bool {
+	if e.IsDir() {
+		return true
+	}
+	if e.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(base, e.Name()))
+	return err == nil && info.IsDir()
+}
