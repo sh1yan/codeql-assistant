@@ -40,6 +40,7 @@ type App struct {
 	extraEntry    *widget.Entry
 	profileSel    *widget.Select
 
+	console          *consoleWriter // 控制台输出的合并刷新与完整日志写入
 	consoleLabel     *widget.Label
 	consoleScroll    *container.Scroll
 	statusLabel      *widget.Label
@@ -48,6 +49,7 @@ type App struct {
 	stopBtn          *widget.Button
 	clearBtn         *widget.Button
 	copyConsoleBtn   *widget.Button
+	openLogBtn       *widget.Button
 	saveProfileBtn   *widget.Button
 	deleteProfileBtn *widget.Button // 新增删除配置按钮的功能 2026.7.15
 	historyBtn       *widget.Button
@@ -71,6 +73,7 @@ func NewApp(w fyne.Window) *App {
 	})
 
 	a.buildUI()
+	a.initConsole()
 	a.loadLastConfig()
 	a.syncUIFromConfig()
 	a.updateProfileList()
@@ -78,6 +81,21 @@ func NewApp(w fyne.Window) *App {
 	// 为控制台 Entry 应用自定义主题，使禁用状态下的文字仍保持明亮可读
 
 	return a
+}
+
+// initConsole 创建控制台写入器：它负责把海量输出合并成低频的界面刷新，
+// 避免逐行 SetText + ScrollToBottom 把 Fyne 主线程的函数队列堵死。
+func (a *App) initConsole() {
+	a.console = newConsoleWriter(a.consoleLabel, a.consoleScroll)
+	a.console.onLogPath = func(path string) {
+		if path == "" {
+			a.openLogBtn.SetText("打开日志")
+			a.openLogBtn.Disable()
+			return
+		}
+		a.openLogBtn.SetText("打开日志 · " + filepath.Base(path))
+		a.openLogBtn.Enable()
+	}
 }
 
 func (a *App) buildUI() {
@@ -178,16 +196,19 @@ func (a *App) createWidgets() {
 	a.stopBtn.Disable()
 
 	a.clearBtn = widget.NewButtonWithIcon("清理输出", theme.ContentClearIcon(), func() {
-		a.consoleLabel.SetText("")
-		a.consoleLabel.Refresh() // 增加控制台内容刷新，避免出现白板 2026.7.15
-		if a.consoleScroll != nil {
-			a.consoleScroll.Refresh()
-		}
+		a.console.clear()
 	})
 
 	a.copyConsoleBtn = widget.NewButtonWithIcon("复制", theme.ContentCopyIcon(), func() {
-		fyne.CurrentApp().Clipboard().SetContent(a.consoleLabel.Text)
+		fyne.CurrentApp().Clipboard().SetContent(a.console.content())
 	})
+
+	a.openLogBtn = widget.NewButtonWithIcon("打开日志", theme.FileTextIcon(), func() {
+		if err := a.console.openLog(); err != nil {
+			dialog.ShowError(err, a.window)
+		}
+	})
+	a.openLogBtn.Disable() // 还没有运行过，暂无日志文件
 
 	a.saveProfileBtn = widget.NewButtonWithIcon("保存", theme.DocumentSaveIcon(), a.onSaveProfile)
 
@@ -324,6 +345,7 @@ func (a *App) buildConsoleSection() fyne.CanvasObject {
 	header := container.NewHBox(
 		widget.NewLabelWithStyle("控制台输出", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		layout.NewSpacer(),
+		a.openLogBtn,
 		a.copyConsoleBtn,
 		a.clearBtn,
 	)
@@ -368,7 +390,7 @@ func (a *App) onRun() {
 	}
 
 	a.saveLastConfig()
-	a.consoleLabel.SetText("")
+	a.console.start()
 	a.runBtn.Disable()
 	a.stopBtn.Enable()
 	a.progressBar.Show()
@@ -378,6 +400,9 @@ func (a *App) onRun() {
 	go func() {
 		defer func() {
 			fyne.Do(func() {
+				// 先把缓冲区里剩余的日志刷出去，再恢复按钮状态，
+				// 这样“运行中”不会因为日志尚未显示完而多停留。
+				a.console.finish()
 				a.runBtn.Enable()
 				a.stopBtn.Disable()
 				a.progressBar.Hide()
@@ -387,10 +412,7 @@ func (a *App) onRun() {
 
 		cfg := a.config
 		err := a.runner.RunAnalyze(cfg, func(line string, isError bool) {
-			lineCopy := line
-			fyne.Do(func() {
-				a.appendOutput(lineCopy)
-			})
+			a.appendOutput(line)
 		})
 
 		duration := time.Since(a.startTime)
@@ -403,6 +425,7 @@ func (a *App) onRun() {
 }
 
 func (a *App) onStop() {
+	// onStop 由界面事件触发，已经在 Fyne 主线程上，直接写入即可。
 	a.appendOutput("--- Stopping... ---")
 	a.runner.Stop()
 }
@@ -430,7 +453,7 @@ func (a *App) onCreateDatabase() {
 				return
 			}
 			a.saveLastConfig()
-			a.consoleLabel.SetText("")
+			a.console.start()
 			a.runBtn.Disable()
 			a.stopBtn.Enable()
 			a.progressBar.Show()
@@ -440,6 +463,9 @@ func (a *App) onCreateDatabase() {
 			go func() {
 				defer func() {
 					fyne.Do(func() {
+						// 先把缓冲区里剩余的日志刷出去，再恢复按钮状态，
+						// 避免数据库已建好但界面仍显示“运行中”。
+						a.console.finish()
 						a.runBtn.Enable()
 						a.stopBtn.Disable()
 						a.progressBar.Hide()
@@ -449,10 +475,7 @@ func (a *App) onCreateDatabase() {
 
 				cfg := a.config
 				err := a.runner.RunDatabaseCreate(cfg, func(line string, isError bool) {
-					lineCopy := line
-					fyne.Do(func() {
-						a.appendOutput(lineCopy)
-					})
+					a.appendOutput(line)
 				})
 
 				duration := time.Since(a.startTime)
@@ -624,18 +647,10 @@ func (a *App) updateProfileList() {
 
 // --- Output ---
 
+// appendOutput 接收一行 CodeQL 输出（可能来自任意 goroutine）。
+// 实际的重绘被 consoleWriter 合并节流，这里不再逐行操作控件。
 func (a *App) appendOutput(line string) {
-	current := a.consoleLabel.Text
-	if current != "" {
-		current += "\n"
-	}
-	current += line
-	a.consoleLabel.SetText(current)
-	a.consoleLabel.Refresh()
-	// 每次追加输出后，自动滚动到底部
-	if a.consoleScroll != nil {
-		a.consoleScroll.ScrollToBottom()
-	}
+	a.console.append(line)
 }
 
 // --- Config sync ---
